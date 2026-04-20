@@ -1429,6 +1429,51 @@ class FPDF(GraphicsStateMixin, TextRegionMixin):
             frag.get_width() for frag in self._preload_bidirectional_text(s, markdown)
         )
 
+    def get_string_y_extents(
+        self, s: str, normalized: bool = False, markdown: bool = False
+    ) -> tuple[float, float]:
+        """
+        Returns `(y_min, y_max)` in user units: the topmost and bottommost
+        offsets, relative to the baseline, of the inked bounding box of `s`
+        when drawn with the current font, size, and text-shaping
+        configuration. The returned coordinates use the same Y-down
+        convention as fpdf's user space, so negative values are above the
+        baseline and positive values are below it. A font must be selected.
+
+        Given a baseline `y0` (the y passed to `FPDF.text()`), the inked
+        string covers `[y0 + y_min, y0 + y_max]` vertically. A string whose
+        glyphs all sit above the baseline returns two negative values; one
+        whose glyphs all sit below the baseline returns two positive values;
+        text with no inked glyphs (e.g. whitespace) returns `(0.0, 0.0)`.
+
+        This is the vertical companion to `FPDF.get_string_width()`: it walks
+        the same fragment pipeline and honors HarfBuzz shaping when
+        `FPDF.set_text_shaping()` is active. Requires a TrueType/OpenType
+        font; the PDF core fonts do not expose per-glyph metrics.
+
+        Args:
+            s (str): the string whose vertical extents are to be computed.
+            normalized (bool): whether normalization needs to be performed on the input string.
+            markdown (bool): indicates if basic markdown support is enabled
+        """
+        if not self.font_family:
+            raise FPDFException("No font set, you need to call set_font() beforehand")
+        s = s if normalized else self.normalize_text(s)
+        y_min: Optional[float] = None
+        y_max: Optional[float] = None
+        for frag in self._preload_bidirectional_text(s, markdown):
+            f_min, f_max = frag.get_y_extents()
+            if f_min == 0.0 and f_max == 0.0:  # fragment has no inked glyphs
+                continue
+            if y_min is None or f_min < y_min:
+                y_min = f_min
+            if y_max is None or f_max > y_max:
+                y_max = f_max
+        if y_min is None:
+            return 0.0, 0.0
+        assert y_max is not None
+        return y_min, y_max
+
     def set_line_width(self, width: float) -> None:
         """
         Defines the line width of all stroking operations (lines, rectangles and cell borders).

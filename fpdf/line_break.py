@@ -234,6 +234,18 @@ class Fragment:
     def __hash__(self) -> int:
         return hash((self.characters, self.graphics_state, self.k))
 
+    def get_y_extents(self) -> tuple[float, float]:
+        """
+        Return the fragment's inked `(y_min, y_max)` offsets from the baseline,
+        in user units, honoring shaping if configured. Uses fpdf's Y-down
+        convention: negative values are above the baseline, positive values
+        are below it.
+        """
+        y_min_pt, y_max_pt = self.font.get_text_y_extents(
+            self.string, self.font_size_pt, self.text_shaping_parameters
+        )
+        return y_min_pt / self.k, y_max_pt / self.k
+
     def get_width(
         self,
         start: int = 0,

@@ -33,6 +33,7 @@ from typing import (
 )
 
 from fontTools import ttLib
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.varLib import instancer
 
@@ -307,6 +308,18 @@ class CoreFont:
         self, text: str, font_size_pt: float, _: Optional[dict[str, Any]]
     ) -> tuple[int, float]:
         return (len(text), sum(self.cw[c] for c in text) * font_size_pt * 0.001)
+
+    # pylint: disable=no-self-use,unused-argument
+    def get_text_y_extents(
+        self,
+        text: str,
+        font_size_pt: float,
+        text_shaping_params: Optional[dict[str, Any]],
+    ) -> tuple[float, float]:
+        raise FPDFException(
+            "get_string_y_extents() requires a TrueType/OpenType font added via"
+            " add_font(); the PDF core fonts do not expose per-glyph metrics."
+        )
 
     # Disabling this check - method kept as is to have same method/signature on CoreConf and TTFFont:
     # pylint: disable=no-self-use
@@ -734,6 +747,59 @@ class TTFFont:
             len(mapped_text),
             sum(self.cw[ord(c)] for c in mapped_text) * font_size_pt * 0.001,
         )
+
+    def get_text_y_extents(
+        self,
+        text: str,
+        font_size_pt: float,
+        text_shaping_params: Optional[dict[str, Any]],
+    ) -> tuple[float, float]:
+        """
+        Return `(y_min, y_max)` in points: the topmost and bottommost
+        offsets, relative to the baseline, of the inked bounding box of
+        `text` when drawn at `font_size_pt`. The returned coordinates use
+        the same Y-down convention as fpdf's user space, so negative values
+        are above the baseline and positive values are below it. A string
+        whose glyphs all sit above the baseline returns two negative values;
+        a string whose glyphs all sit below the baseline returns two positive
+        values. When `text_shaping_params` is supplied, HarfBuzz resolves the
+        actual glyph sequence (ligatures, contextual substitutions, marks);
+        otherwise a per-codepoint cmap lookup is performed, matching
+        `FPDF.text()`. If the text contains no inked glyphs (e.g. whitespace
+        only), returns `(0.0, 0.0)`.
+        """
+        mapped_text = self._map_symbol_text(text)
+        if text_shaping_params:
+            glyph_infos, _ = self.perform_harfbuzz_shaping(
+                mapped_text, font_size_pt, text_shaping_params
+            )
+            glyph_names = [
+                self.ttfont.getGlyphName(gi.codepoint) for gi in glyph_infos
+            ]
+        else:
+            glyph_names = [
+                self.cmap.get(ord(ch), ".notdef") for ch in mapped_text
+            ]
+        glyph_set = self.ttfont.getGlyphSet()
+        # Font space is Y-up (ascenders > 0, descenders < 0). We collect
+        # raw font-space yMin/yMax across inked glyphs, then convert to
+        # fpdf's Y-down user convention by negating: the top of the
+        # bounding box (largest font-space y) becomes the smallest user y.
+        bounds = []
+        for name in glyph_names:
+            if name not in glyph_set:
+                continue
+            pen = BoundsPen(glyph_set)
+            glyph_set[name].draw(pen)
+            if pen.bounds is None:  # empty outline (e.g. space)
+                continue
+            bounds.append(pen.bounds)
+        if not bounds:
+            return 0.0, 0.0
+        font_y_min = min(b[1] for b in bounds)
+        font_y_max = max(b[3] for b in bounds)
+        ratio = self.scale * font_size_pt / 1000
+        return -font_y_max * ratio, -font_y_min * ratio
 
     def shaped_text_width(
         self,
